@@ -20,7 +20,9 @@ package org.apache.paimon.bucket;
 
 import org.apache.paimon.CoreOptions;
 import org.apache.paimon.data.BinaryRow;
+import org.apache.paimon.types.DataTypeRoot;
 import org.apache.paimon.types.RowType;
+import org.apache.paimon.utils.Preconditions;
 
 import java.io.Serializable;
 
@@ -39,8 +41,15 @@ public interface BucketFunction extends Serializable {
         switch (bucketFunctionType) {
             case PAIMON:
                 return new PaimonBucketFunction();
+            case MOD:
+                Preconditions.checkArgument(
+                        bucketKeyType.getFieldCount() == 1
+                                && bucketKeyType.getTypeAt(0).getTypeRoot() == DataTypeRoot.INTEGER,
+                        "Mod bucket function is only supported when bucket column is exactly one int field");
+                return new ModBucketFunction();
             default:
-                throw new IllegalArgumentException("Unsupported hash type: " + bucketFunctionType);
+                throw new IllegalArgumentException(
+                        "Unsupported bucket function: " + bucketFunctionType);
         }
     }
 }

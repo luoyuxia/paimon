@@ -20,38 +20,46 @@ package org.apache.paimon.spark.catalog.functions
 
 import org.apache.paimon.CoreOptions.BucketFunctionType
 import org.apache.paimon.bucket
+import org.apache.paimon.bucket.ModBucketFunction
 import org.apache.paimon.data.serializer.InternalRowSerializer
 import org.apache.paimon.shade.guava30.com.google.common.collect.{ImmutableList, ImmutableMap}
 import org.apache.paimon.spark.SparkInternalRowWrapper
 import org.apache.paimon.spark.SparkTypeUtils.toPaimonRowType
 import org.apache.paimon.spark.catalog.functions.PaimonFunctions._
 import org.apache.paimon.table.{BucketMode, FileStoreTable}
-import org.apache.paimon.types.{ArrayType, LocalZonedTimestampType, MapType, RowType, TimestampType, DataType => PaimonDataType}
+import org.apache.paimon.types.{ArrayType, DataType => PaimonDataType, LocalZonedTimestampType, MapType, RowType, TimestampType}
 import org.apache.paimon.utils.ProjectedRow
+
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.connector.catalog.functions.{BoundFunction, ScalarFunction, UnboundFunction}
-import org.apache.spark.sql.types.DataTypes.{IntegerType, StringType}
 import org.apache.spark.sql.types.{DataType, StructType}
+import org.apache.spark.sql.types.DataTypes.{IntegerType, StringType}
 
 import javax.annotation.Nullable
+
 import scala.collection.JavaConverters._
 
 object PaimonFunctions {
 
   val PAIMON_BUCKET: String = "bucket"
   val MAX_PT: String = "max_pt"
+  val IDENTITY_BUCKET: String = "identity"
 
   private val FUNCTIONS = ImmutableMap.of(
     PAIMON_BUCKET,
     new PaimonBucketFunction,
     MAX_PT,
-    new MaxPtFunction
+    new MaxPtFunction,
+    IDENTITY_BUCKET,
+    new IdentityBucketFunction
   )
 
   /** The bucket function type to the function name mapping */
   private val TYPE_FUNC_MAPPING = ImmutableMap.of(
     BucketFunctionType.PAIMON,
-    PAIMON_BUCKET
+    PAIMON_BUCKET,
+    BucketFunctionType.MOD,
+    IDENTITY_BUCKET
   )
 
   val names: ImmutableList[String] = FUNCTIONS.keySet.asList()
@@ -107,7 +115,7 @@ abstract class BucketFunction(funcName: String, bucketFunctionType: BucketFuncti
 
   override def description: String = name
 
-  override def name: String = PAIMON_BUCKET
+  override def name: String = bucketFunctionType
 
 }
 
@@ -117,6 +125,15 @@ class PaimonBucketFunction extends BucketFunction(PAIMON_BUCKET, BucketFunctionT
       funcType: BucketFunctionType,
       bucketKeyType: RowType): bucket.BucketFunction = {
     new bucket.PaimonBucketFunction
+  }
+}
+
+/** Identity bucket function. */
+class IdentityBucketFunction extends BucketFunction(IDENTITY_BUCKET, BucketFunctionType.MOD) {
+  override def bucketFunction(
+      funcType: BucketFunctionType,
+      bucketKeyType: RowType): bucket.BucketFunction = {
+    new bucket.ModBucketFunction
   }
 }
 

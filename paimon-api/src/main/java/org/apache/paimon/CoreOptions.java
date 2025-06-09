@@ -133,8 +133,31 @@ public class CoreOptions implements Serializable {
                     .withDescription("The bucket function for paimon bucket");
 
     /** Paimon bucket function type. */
-    public enum BucketFunctionType {
-        PAIMON,
+    public enum BucketFunctionType implements DescribedEnum {
+        PAIMON(
+                "paimon",
+                "Paimon's default bucket function, bucket via hash(bucker_key) % numBuckets."),
+        MOD(
+                "mod",
+                "Use mod type as bucket function, bucket via bucket_key % numBuckets, where bucket must be single int column.");
+
+        private final String value;
+        private final String description;
+
+        BucketFunctionType(String value, String description) {
+            this.value = value;
+            this.description = description;
+        }
+
+        @Override
+        public String toString() {
+            return value;
+        }
+
+        @Override
+        public InlineElement getDescription() {
+            return text(description);
+        }
     }
 
     public static final ConfigOption<String> DATA_FILE_EXTERNAL_PATHS =
