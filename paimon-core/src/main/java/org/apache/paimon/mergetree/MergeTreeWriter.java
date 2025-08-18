@@ -63,6 +63,7 @@ public class MergeTreeWriter implements RecordWriter<KeyValue>, MemoryOwner {
     private final CompressOptions sortCompression;
     private final IOManager ioManager;
 
+
     private final RowType keyType;
     private final RowType valueType;
     private final CompactManager compactManager;
