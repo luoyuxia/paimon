@@ -73,6 +73,7 @@ under the License.
         <module>tools/ci/paimon-ci-tools</module>
         <module>paimon-hudi</module>
         <module>paimon-api</module>
+        <module>paimon-fluss</module>
     </modules>
 
     <properties>
@@ -110,6 +111,7 @@ under the License.
         <testcontainers.version>1.19.1</testcontainers.version>
         <iceberg.version>1.6.1</iceberg.version>
         <hudi.version>0.15.0</hudi.version>
+        <fluss.version>0.8.0-incubating</fluss.version>
         <parquet.version>1.15.2</parquet.version>
         <orc.version>1.9.2</orc.version>
         <protobuf-java.version>3.19.6</protobuf-java.version>

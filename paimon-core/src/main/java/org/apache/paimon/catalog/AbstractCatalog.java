@@ -34,6 +34,8 @@ import org.apache.paimon.schema.Schema;
 import org.apache.paimon.schema.SchemaChange;
 import org.apache.paimon.schema.SchemaManager;
 import org.apache.paimon.schema.TableSchema;
+import org.apache.paimon.streamingstore.StreamingStore;
+import org.apache.paimon.streamingstore.StreamingStoreFactory;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.FormatTable;
 import org.apache.paimon.table.Instant;
@@ -58,6 +60,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import static org.apache.paimon.CoreOptions.DATA_FILE_EXTERNAL_PATHS;
@@ -72,6 +75,8 @@ import static org.apache.paimon.catalog.CatalogUtils.validateCreateTable;
 import static org.apache.paimon.catalog.Identifier.DEFAULT_MAIN_BRANCH;
 import static org.apache.paimon.options.CatalogOptions.LOCK_ENABLED;
 import static org.apache.paimon.options.CatalogOptions.LOCK_TYPE;
+import static org.apache.paimon.options.OptionsUtils.convertToPropertiesPrefixKey;
+import static org.apache.paimon.options.OptionsUtils.convertToPropertiesPrefixed;
 
 /** Common implementation of {@link Catalog}. */
 public abstract class AbstractCatalog implements Catalog {
@@ -81,17 +86,20 @@ public abstract class AbstractCatalog implements Catalog {
     protected final FileIO fileIO;
     protected final Map<String, String> tableDefaultOptions;
     protected final CatalogContext context;
+    protected final Map<String, StreamingStoreFactory> streamingStoreFactories;
 
     protected AbstractCatalog(FileIO fileIO) {
         this.fileIO = fileIO;
         this.tableDefaultOptions = new HashMap<>();
         this.context = CatalogContext.create(new Options());
+        this.streamingStoreFactories = new ConcurrentHashMap<>();
     }
 
     protected AbstractCatalog(FileIO fileIO, CatalogContext context) {
         this.fileIO = fileIO;
         this.tableDefaultOptions = CatalogUtils.tableDefaultOptions(context.options().toMap());
         this.context = context;
+        this.streamingStoreFactories = new ConcurrentHashMap<>();
     }
 
     @Override
@@ -450,13 +458,45 @@ public abstract class AbstractCatalog implements Catalog {
             throws TableNotExistException, ColumnAlreadyExistException, ColumnNotExistException {
         checkNotSystemTable(identifier, "alterTable");
 
+        Table table;
         try {
-            getTable(identifier);
+            table = getTable(identifier);
         } catch (TableNotExistException e) {
             if (ignoreIfNotExists) {
                 return;
             }
             throw new TableNotExistException(identifier);
+        }
+
+        Map<String, String> setOptions = changes.stream()
+                .filter(schemaChange -> schemaChange instanceof SchemaChange.SetOption)
+                .map(change -> ((SchemaChange.SetOption) change))
+                .collect(Collectors.toMap(
+                        SchemaChange.SetOption::key,
+                        SchemaChange.SetOption::value
+                ));
+
+        CoreOptions.StreamingStore streamingStoreIdent = Options.fromMap(setOptions)
+                .get(CoreOptions.STREAMING_STORE);
+        if (streamingStoreIdent != null) {
+            StreamingStoreFactory streamingStoreFactory
+                     = streamingStoreFactories
+                    .computeIfAbsent(streamingStoreIdent.toString(), (streamingStoreName) -> FactoryUtil.discoverFactory(
+                            AbstractCatalog.class.getClassLoader(),
+                            StreamingStoreFactory.class,
+                            streamingStoreIdent.toString()
+                    ));
+            StreamingStore streamingStore = streamingStoreFactory.createStreamingStore(
+                    convertToPropertiesPrefixed(
+                            setOptions, streamingStoreIdent.name()
+                    ));
+
+            List<SchemaChange> additionSchemaChanges =
+            streamingStore.createTable(
+                    identifier, table.copy(setOptions)
+            );
+            changes = new ArrayList<>(changes);
+            changes.addAll(additionSchemaChanges);
         }
 
         alterTableImpl(identifier, changes);
@@ -593,6 +633,13 @@ public abstract class AbstractCatalog implements Catalog {
             throws FunctionNotExistException, DefinitionAlreadyExistException,
                     DefinitionNotExistException {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void close() throws Exception {
+        for (StreamingStoreFactory streamingStoreFactory : streamingStoreFactories.values()) {
+            streamingStoreFactory.close();
+        }
     }
 
     /**

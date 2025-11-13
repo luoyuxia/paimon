@@ -417,6 +417,7 @@ public class JdbcCatalog extends AbstractCatalog {
 
     @Override
     public void close() throws Exception {
+        super.close();
         connections.close();
     }
 

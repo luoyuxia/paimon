@@ -1315,7 +1315,7 @@ public class HiveCatalog extends AbstractCatalog {
 
     @Override
     public void close() throws Exception {
-        // do nothing
+        super.close();
     }
 
     @Override

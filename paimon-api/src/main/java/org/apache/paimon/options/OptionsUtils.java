@@ -272,7 +272,7 @@ public class OptionsUtils {
         return candidate.startsWith(prefixKey);
     }
 
-    static Map<String, String> convertToPropertiesPrefixed(
+    public static Map<String, String> convertToPropertiesPrefixed(
             Map<String, String> confData, String key) {
         return convertToPropertiesPrefixKey(confData, key + ".");
     }
