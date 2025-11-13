@@ -2020,6 +2020,30 @@ public class CoreOptions implements Serializable {
                     .withDescription(
                             "Write blob field using blob descriptor rather than blob bytes.");
 
+    public static final ConfigOption<StreamingStore> STREAMING_STORE =
+            key("streaming-store")
+                    .enumType(StreamingStore.class)
+                    .noDefaultValue()
+                    .withDescription(
+                            "Specifies the streaming store implementation to enable second-level latency for Paimon tables. "
+                                    + "When set, all writes are routed to the streaming store instead of directly to Paimon file store. "
+                                    + "The streaming store's Tiering Service then asynchronously writes data to Paimon, maintaining data consistency. "
+                                    + "Read operations automatically use Union Read to combine historical data from Paimon snapshots and real-time data from the streaming store. "
+                                    + "Currently supports: 'fluss' - Use Fluss as the streaming store for second-level latency. "
+                                    + "This allows upgrading existing minute-level latency Paimon tables to second-level latency without losing historical data or requiring complex migration.");
+
+    public static final ConfigOption<Boolean> BATCH_SCAN_STREAMING_STORE =
+            key("batch-scan-streaming-store")
+                    .booleanType()
+                    .defaultValue(true)
+                    .withDescription(
+                            "Controls whether batch scan operations should read from the streaming store when 'streaming-store' is set. "
+                                    + "When set to 'true' (default), batch scans will use Union Read to combine data from both Paimon snapshots and the streaming store. "
+                                    + "When set to 'false', batch scans will only read from Paimon snapshots, bypassing the streaming store entirely. "
+                                    + "This option is particularly useful for OLAP engines like StarRocks and Hologress where Union Read performance is suboptimal. "
+                                    + "Setting this to 'false' provides better query performance for OLAP engines by reading only from Paimon's own data, "
+                                    + "though real-time data in the streaming store will not be included in the query results.");
+
     private final Options options;
 
     public CoreOptions(Map<String, String> options) {
@@ -3109,6 +3133,10 @@ public class CoreOptions implements Serializable {
         return options.get(BLOB_AS_DESCRIPTOR);
     }
 
+    public boolean batchScanStreamingStore() {
+        return options.get(BATCH_SCAN_STREAMING_STORE);
+    }
+
     /** Specifies the merge engine for table with primary key. */
     public enum MergeEngine implements DescribedEnum {
         DEDUPLICATE("deduplicate", "De-duplicate and keep the last row."),
@@ -3909,6 +3937,30 @@ public class CoreOptions implements Serializable {
         private final String description;
 
         FormatTableImplementation(String value, String description) {
+            this.value = value;
+            this.description = description;
+        }
+
+        @Override
+        public String toString() {
+            return value;
+        }
+
+        @Override
+        public InlineElement getDescription() {
+            return text(description);
+        }
+    }
+
+    /** Specifies the implementation of streaming table. */
+    public enum StreamingStore implements DescribedEnum {
+        FLUSS("fluss", "Fluss as  the streaming store.");
+
+        private final String value;
+
+        private final String description;
+
+        StreamingStore(String value, String description) {
             this.value = value;
             this.description = description;
         }

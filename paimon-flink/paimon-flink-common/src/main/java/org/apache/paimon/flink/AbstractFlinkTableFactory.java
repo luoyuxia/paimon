@@ -18,6 +18,14 @@
 
 package org.apache.paimon.flink;
 
+import org.apache.flink.table.api.DataTypes;
+import org.apache.flink.table.catalog.CatalogManager;
+import org.apache.flink.table.catalog.CatalogStoreHolder;
+import org.apache.flink.table.catalog.Column;
+import org.apache.flink.table.catalog.ObjectPath;
+import org.apache.flink.table.catalog.ResolvedCatalogTable;
+import org.apache.flink.table.catalog.ResolvedSchema;
+import org.apache.paimon.CoreOptions;
 import org.apache.paimon.CoreOptions.LogChangelogMode;
 import org.apache.paimon.CoreOptions.LogConsistency;
 import org.apache.paimon.CoreOptions.StreamingReadMode;
@@ -48,9 +56,12 @@ import org.apache.flink.table.api.ValidationException;
 import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.connector.sink.DynamicTableSink;
 import org.apache.flink.table.connector.source.DynamicTableSource;
+import org.apache.flink.table.factories.CatalogFactory;
 import org.apache.flink.table.factories.DynamicTableFactory;
 import org.apache.flink.table.factories.DynamicTableSinkFactory;
 import org.apache.flink.table.factories.DynamicTableSourceFactory;
+import org.apache.flink.table.factories.Factory;
+import org.apache.flink.table.factories.FactoryUtil;
 import org.apache.flink.table.types.logical.RowType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,6 +83,7 @@ import static org.apache.paimon.CoreOptions.LOG_CHANGELOG_MODE;
 import static org.apache.paimon.CoreOptions.LOG_CONSISTENCY;
 import static org.apache.paimon.CoreOptions.SCAN_MODE;
 import static org.apache.paimon.CoreOptions.STREAMING_READ_MODE;
+import static org.apache.paimon.CoreOptions.STREAMING_STORE;
 import static org.apache.paimon.CoreOptions.StartupMode.FROM_SNAPSHOT;
 import static org.apache.paimon.CoreOptions.StartupMode.FROM_SNAPSHOT_FULL;
 import static org.apache.paimon.flink.FlinkConnectorOptions.FILESYSTEM_JOB_LEVEL_SETTINGS_ENABLED;
@@ -95,7 +107,82 @@ public abstract class AbstractFlinkTableFactory
 
     @Override
     public DynamicTableSource createDynamicTableSource(Context context) {
-        CatalogTable origin = context.getCatalogTable().getOrigin();
+        CatalogTable origin = context.getCatalogTable();
+        Map<String, String> options = context.getCatalogTable().getOptions();
+        CoreOptions.StreamingStore streamingStore =
+                Options.fromMap(context.getCatalogTable().getOptions()).get(STREAMING_STORE);
+        if (streamingStore != null) {
+            Factory factory =
+                    FactoryUtil.discoverFactory(
+                            context.getClassLoader(), Factory.class, streamingStore.toString());
+            CatalogFactory catalogFactory = (CatalogFactory) factory;
+            Map<String, String> flussOptions = new HashMap<>();
+            for (Map.Entry<String, String> entry : options.entrySet()) {
+                if (entry.getKey().startsWith("fluss")) {
+                    flussOptions.put(entry.getKey().substring(6), entry.getValue());
+                }
+            }
+
+            org.apache.flink.table.catalog.Catalog catalog = catalogFactory
+                    .createCatalog(
+                            new CatalogFactory.Context() {
+                                @Override
+                                public String getName() {
+                                    return flinkCatalog.getName();
+                                }
+
+                                @Override
+                                public Map<String, String> getOptions() {
+                                    return flussOptions;
+                                }
+
+                                @Override
+                                public ReadableConfig getConfiguration() {
+                                    return context.getConfiguration();
+                                }
+
+                                @Override
+                                public ClassLoader getClassLoader() {
+                                    return context.getClassLoader();
+                                }
+                            });
+            catalog.open();
+
+            try {
+                CatalogTable catalogTable = (CatalogTable)
+                        catalog.getTable(
+                                new ObjectPath(context.getObjectIdentifier().getDatabaseName(),
+                                        context.getObjectIdentifier().getObjectName())
+                        );
+                DynamicTableSourceFactory dynamicTableSourceFactory =
+                        (DynamicTableSourceFactory)
+                                catalog
+                                        .getFactory()
+                                        .get();
+
+                ResolvedCatalogTable resolvedCatalogTable =
+                        new ResolvedCatalogTable(
+                                catalogTable,
+                                context.getCatalogTable().getResolvedSchema()
+                        );
+                DynamicTableFactory.Context newContext =
+                        new FactoryUtil.DefaultDynamicTableContext(
+                                context.getObjectIdentifier(),
+                                resolvedCatalogTable,
+                                context.getEnrichmentOptions(),
+                                context.getConfiguration(),
+                                context.getClassLoader(),
+                                context.isTemporary());
+                return dynamicTableSourceFactory.createDynamicTableSource(newContext);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            } finally {
+                catalog.close();
+            }
+
+        }
+        // Check if this is a Fluss streaming store table
+
         Table table =
                 origin instanceof SystemCatalogTable
                         ? ((SystemCatalogTable) origin).table()
@@ -103,7 +190,6 @@ public abstract class AbstractFlinkTableFactory
         boolean unbounded =
                 context.getConfiguration().get(ExecutionOptions.RUNTIME_MODE)
                         == RuntimeExecutionMode.STREAMING;
-        Map<String, String> options = table.options();
         if (options.containsKey(SCAN_BOUNDED.key())
                 && parseBoolean(options.get(SCAN_BOUNDED.key()))) {
             unbounded = false;
@@ -122,6 +208,81 @@ public abstract class AbstractFlinkTableFactory
 
     @Override
     public DynamicTableSink createDynamicTableSink(Context context) {
+        Map<String, String> options = context.getCatalogTable().getOptions();
+        CoreOptions.StreamingStore streamingStore =
+                Options.fromMap(context.getCatalogTable().getOptions()).get(STREAMING_STORE);
+        if (streamingStore != null) {
+            Factory factory =
+                    FactoryUtil.discoverFactory(
+                            context.getClassLoader(), Factory.class, streamingStore.toString());
+            CatalogFactory catalogFactory = (CatalogFactory) factory;
+            Map<String, String> flussOptions = new HashMap<>();
+            for (Map.Entry<String, String> entry : options.entrySet()) {
+                if (entry.getKey().startsWith("fluss")) {
+                    flussOptions.put(entry.getKey().substring(6), entry.getValue());
+                }
+            }
+
+            org.apache.flink.table.catalog.Catalog catalog = catalogFactory
+                    .createCatalog(
+                            new CatalogFactory.Context() {
+                                @Override
+                                public String getName() {
+                                    return flinkCatalog.getName();
+                                }
+
+                                @Override
+                                public Map<String, String> getOptions() {
+                                    return flussOptions;
+                                }
+
+                                @Override
+                                public ReadableConfig getConfiguration() {
+                                    return context.getConfiguration();
+                                }
+
+                                @Override
+                                public ClassLoader getClassLoader() {
+                                    return context.getClassLoader();
+                                }
+                            });
+            catalog.open();
+
+            try {
+                CatalogTable catalogTable = (CatalogTable)
+                        catalog.getTable(
+                                new ObjectPath(context.getObjectIdentifier().getDatabaseName(),
+                                        context.getObjectIdentifier().getObjectName())
+                        );
+                DynamicTableSinkFactory dynamicTableSinkFactory =
+                        (DynamicTableSinkFactory)
+                                catalog
+                                .getFactory()
+                                .get();
+
+
+                ResolvedCatalogTable resolvedCatalogTable =
+                        new ResolvedCatalogTable(
+                                catalogTable,
+                                context.getCatalogTable().getResolvedSchema()
+                        );
+                DynamicTableFactory.Context newContext =
+                        new FactoryUtil.DefaultDynamicTableContext(
+                                context.getObjectIdentifier(),
+                                resolvedCatalogTable,
+                                context.getEnrichmentOptions(),
+                                context.getConfiguration(),
+                                context.getClassLoader(),
+                                context.isTemporary());
+                return dynamicTableSinkFactory.createDynamicTableSink(newContext);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            } finally {
+                catalog.close();
+            }
+
+        }
+
         return new FlinkTableSink(
                 context.getObjectIdentifier(),
                 buildPaimonTable(context),
