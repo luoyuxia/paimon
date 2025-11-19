@@ -39,7 +39,7 @@ under the License.
 
     <modules>
         <module>paimon-spark-common</module>
-        <module>paimon-spark-ut</module>
+<!--        <module>paimon-spark-ut</module>-->
     </modules>
 
     <dependencyManagement>

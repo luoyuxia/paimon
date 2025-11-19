@@ -75,7 +75,6 @@ import static org.apache.paimon.catalog.CatalogUtils.validateCreateTable;
 import static org.apache.paimon.catalog.Identifier.DEFAULT_MAIN_BRANCH;
 import static org.apache.paimon.options.CatalogOptions.LOCK_ENABLED;
 import static org.apache.paimon.options.CatalogOptions.LOCK_TYPE;
-import static org.apache.paimon.options.OptionsUtils.convertToPropertiesPrefixKey;
 import static org.apache.paimon.options.OptionsUtils.convertToPropertiesPrefixed;
 
 /** Common implementation of {@link Catalog}. */
@@ -468,33 +467,32 @@ public abstract class AbstractCatalog implements Catalog {
             throw new TableNotExistException(identifier);
         }
 
-        Map<String, String> setOptions = changes.stream()
-                .filter(schemaChange -> schemaChange instanceof SchemaChange.SetOption)
-                .map(change -> ((SchemaChange.SetOption) change))
-                .collect(Collectors.toMap(
-                        SchemaChange.SetOption::key,
-                        SchemaChange.SetOption::value
-                ));
+        Map<String, String> setOptions =
+                changes.stream()
+                        .filter(schemaChange -> schemaChange instanceof SchemaChange.SetOption)
+                        .map(change -> ((SchemaChange.SetOption) change))
+                        .collect(
+                                Collectors.toMap(
+                                        SchemaChange.SetOption::key,
+                                        SchemaChange.SetOption::value));
 
-        CoreOptions.StreamingStore streamingStoreIdent = Options.fromMap(setOptions)
-                .get(CoreOptions.STREAMING_STORE);
+        CoreOptions.StreamingStore streamingStoreIdent =
+                Options.fromMap(setOptions).get(CoreOptions.STREAMING_STORE);
         if (streamingStoreIdent != null) {
-            StreamingStoreFactory streamingStoreFactory
-                     = streamingStoreFactories
-                    .computeIfAbsent(streamingStoreIdent.toString(), (streamingStoreName) -> FactoryUtil.discoverFactory(
-                            AbstractCatalog.class.getClassLoader(),
-                            StreamingStoreFactory.class,
-                            streamingStoreIdent.toString()
-                    ));
-            StreamingStore streamingStore = streamingStoreFactory.createStreamingStore(
-                    convertToPropertiesPrefixed(
-                            setOptions, streamingStoreIdent.name()
-                    ));
+            StreamingStoreFactory streamingStoreFactory =
+                    streamingStoreFactories.computeIfAbsent(
+                            streamingStoreIdent.toString(),
+                            (streamingStoreName) ->
+                                    FactoryUtil.discoverFactory(
+                                            AbstractCatalog.class.getClassLoader(),
+                                            StreamingStoreFactory.class,
+                                            streamingStoreIdent.toString()));
+            StreamingStore streamingStore =
+                    streamingStoreFactory.createStreamingStore(
+                            convertToPropertiesPrefixed(setOptions, streamingStoreIdent.toString()));
 
             List<SchemaChange> additionSchemaChanges =
-            streamingStore.createTable(
-                    identifier, table.copy(setOptions)
-            );
+                    streamingStore.createTable(identifier, table.copy(setOptions));
             changes = new ArrayList<>(changes);
             changes.addAll(additionSchemaChanges);
         }

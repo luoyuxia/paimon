@@ -2081,7 +2081,6 @@ public class CoreOptions implements Serializable {
                                     + "Setting this to 'false' provides better query performance for OLAP engines by reading only from Paimon's own data, "
                                     + "though real-time data in the streaming store will not be included in the query results.");
 
-
     private final Options options;
 
     public CoreOptions(Map<String, String> options) {

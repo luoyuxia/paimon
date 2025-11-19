@@ -1,7 +1,23 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.paimon.streamingstore.fluss.utils;
 
-import org.apache.fluss.types.DataType;
-import org.apache.fluss.types.DataTypes;
 import org.apache.paimon.types.ArrayType;
 import org.apache.paimon.types.BigIntType;
 import org.apache.paimon.types.BinaryType;
@@ -27,12 +43,14 @@ import org.apache.paimon.types.VarBinaryType;
 import org.apache.paimon.types.VarCharType;
 import org.apache.paimon.types.VariantType;
 
+import org.apache.fluss.types.DataType;
+import org.apache.fluss.types.DataTypes;
+
 /** Convert from Paimon's data type to Fluss's data type. */
 public class PaimonDataTypeToFlussDataType implements DataTypeVisitor<DataType> {
 
     public static final PaimonDataTypeToFlussDataType INSTANCE =
             new PaimonDataTypeToFlussDataType();
-
 
     @Override
     public DataType visit(CharType charType) {
@@ -56,12 +74,15 @@ public class PaimonDataTypeToFlussDataType implements DataTypeVisitor<DataType> 
 
     @Override
     public DataType visit(VarBinaryType varBinaryType) {
-        return withNullability(DataTypes.BINARY(varBinaryType.getLength()), varBinaryType.isNullable());
+        return withNullability(
+                DataTypes.BINARY(varBinaryType.getLength()), varBinaryType.isNullable());
     }
 
     @Override
     public DataType visit(DecimalType decimalType) {
-        return withNullability(DataTypes.DECIMAL(decimalType.getPrecision(), decimalType.getScale()), decimalType.isNullable());
+        return withNullability(
+                DataTypes.DECIMAL(decimalType.getPrecision(), decimalType.getScale()),
+                decimalType.isNullable());
     }
 
     @Override
@@ -106,14 +127,15 @@ public class PaimonDataTypeToFlussDataType implements DataTypeVisitor<DataType> 
 
     @Override
     public DataType visit(TimestampType timestampType) {
-        return withNullability(DataTypes.TIMESTAMP(timestampType.getPrecision()), timestampType.isNullable());
+        return withNullability(
+                DataTypes.TIMESTAMP(timestampType.getPrecision()), timestampType.isNullable());
     }
 
     @Override
     public DataType visit(LocalZonedTimestampType localZonedTimestampType) {
-        return withNullability(DataTypes.TIMESTAMP_LTZ(
-                localZonedTimestampType.getPrecision()
-        ), localZonedTimestampType.isNullable());
+        return withNullability(
+                DataTypes.TIMESTAMP_LTZ(localZonedTimestampType.getPrecision()),
+                localZonedTimestampType.isNullable());
     }
 
     @Override
@@ -129,10 +151,7 @@ public class PaimonDataTypeToFlussDataType implements DataTypeVisitor<DataType> 
     @Override
     public DataType visit(ArrayType arrayType) {
         return withNullability(
-                DataTypes.ARRAY(
-                        arrayType.getElementType().accept(this)
-                ), arrayType.isNullable()
-        );
+                DataTypes.ARRAY(arrayType.getElementType().accept(this)), arrayType.isNullable());
     }
 
     @Override
@@ -144,21 +163,16 @@ public class PaimonDataTypeToFlussDataType implements DataTypeVisitor<DataType> 
     public DataType visit(MapType mapType) {
         return withNullability(
                 DataTypes.MAP(
-                        mapType.getKeyType().accept(this),
-                        mapType.getValueType().accept(this)
-                ), mapType.isNullable()
-        );
+                        mapType.getKeyType().accept(this), mapType.getValueType().accept(this)),
+                mapType.isNullable());
     }
 
     @Override
     public DataType visit(RowType rowType) {
-        org.apache.fluss.types.RowType.Builder rowTypeBuilder = org.apache.fluss.types.RowType.builder();
+        org.apache.fluss.types.RowType.Builder rowTypeBuilder =
+                org.apache.fluss.types.RowType.builder();
         for (DataField field : rowType.getFields()) {
-            rowTypeBuilder.field(
-                    field.name(),
-                    field.type().accept(this),
-                    field.description()
-            );
+            rowTypeBuilder.field(field.name(), field.type().accept(this), field.description());
         }
         return withNullability(rowTypeBuilder.build(), rowType.isNullable());
     }

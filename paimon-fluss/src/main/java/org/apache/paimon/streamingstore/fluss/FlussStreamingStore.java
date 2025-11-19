@@ -1,14 +1,25 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.paimon.streamingstore.fluss;
 
-import org.apache.fluss.client.Connection;
-import org.apache.fluss.client.ConnectionFactory;
-import org.apache.fluss.client.admin.Admin;
-import org.apache.fluss.config.Configuration;
-import org.apache.fluss.metadata.TableDescriptor;
-import org.apache.fluss.metadata.TablePath;
 import org.apache.paimon.catalog.Catalog;
 import org.apache.paimon.catalog.Identifier;
-import org.apache.paimon.schema.Schema;
 import org.apache.paimon.schema.SchemaChange;
 import org.apache.paimon.streamingstore.StreamingStore;
 import org.apache.paimon.table.BucketMode;
@@ -17,6 +28,13 @@ import org.apache.paimon.table.Table;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DataTypes;
 import org.apache.paimon.utils.ExceptionUtils;
+
+import org.apache.fluss.client.Connection;
+import org.apache.fluss.client.ConnectionFactory;
+import org.apache.fluss.client.admin.Admin;
+import org.apache.fluss.config.Configuration;
+import org.apache.fluss.metadata.TableDescriptor;
+import org.apache.fluss.metadata.TablePath;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -46,46 +64,51 @@ public class FlussStreamingStore implements StreamingStore, AutoCloseable {
     private final Connection connection;
     private final Admin admin;
 
-
     public FlussStreamingStore(Map<String, String> options) {
         connection = ConnectionFactory.createConnection(Configuration.fromMap(options));
         admin = connection.getAdmin();
     }
 
-
     @Override
     public List<SchemaChange> createTable(Identifier identifier, Table table) {
         FileStoreTable fileStoreTable = (FileStoreTable) table;
-        if (fileStoreTable.bucketMode() != BucketMode.BUCKET_UNAWARE || fileStoreTable.bucketMode() != BucketMode.HASH_FIXED) {
-            throw new IllegalArgumentException("Unsupported bucket mode: " + fileStoreTable.bucketMode() + ". Only bucket unaware and hash fixed modes are supported.");
+        if (fileStoreTable.bucketMode() != BucketMode.BUCKET_UNAWARE
+                && fileStoreTable.bucketMode() != BucketMode.HASH_FIXED) {
+            throw new IllegalArgumentException(
+                    "Unsupported bucket mode: "
+                            + fileStoreTable.bucketMode()
+                            + ". Only bucket unaware and hash fixed modes are supported.");
         }
 
         TableDescriptor flussTableDescriptor = toFlussTableDescriptor(table);
         try {
-            admin.createTable(
-                    toTablePath(identifier),
-                    flussTableDescriptor,
-                    true
-            ).get();
+            admin.createTable(toTablePath(identifier), flussTableDescriptor, true).get();
         } catch (Exception e) {
             throw new RuntimeException(
-                    String.format("Fail to create table %s in %s", identifier, FlussStreamingStoreFactory.IDENTIFIER),
+                    String.format(
+                            "Fail to create table %s in %s",
+                            identifier, FlussStreamingStoreFactory.IDENTIFIER),
                     ExceptionUtils.stripCompletionException(e));
         }
 
         List<SchemaChange> changes = new ArrayList<>(SYSTEM_COLUMNS.size());
         for (Map.Entry<String, DataType> systemColumn : SYSTEM_COLUMNS.entrySet()) {
-            changes.add(
-                    SchemaChange.addColumn(systemColumn.getKey(), systemColumn.getValue())
-            );
+            changes.add(SchemaChange.addColumn(systemColumn.getKey(), systemColumn.getValue()));
         }
         return changes;
     }
 
     @Override
-    public void dropPartitions(Identifier identifier, List<Map<String, String>> partitions) throws Catalog.TableNotExistException {
+    public void dropPartitions(Identifier identifier, List<Map<String, String>> partitions)
+            throws Catalog.TableNotExistException {
         // todo:
     }
+
+    @Override
+    public void alterTable(
+            Identifier identifier, List<SchemaChange> changes, boolean ignoreIfNotExists)
+            throws Catalog.TableNotExistException, Catalog.ColumnAlreadyExistException,
+                    Catalog.ColumnNotExistException {}
 
     @Override
     public void dropTable(Identifier identifier) {

@@ -947,8 +947,14 @@ public class FlinkCatalog extends AbstractCatalog {
         // add columns
         List<RowType.RowField> physicalRowFields = toLogicalType(table.rowType()).getFields();
         List<String> physicalColumns = table.rowType().getFieldNames();
+
+        String streamingStore = getStreamingStore(newOptions);
+        if (streamingStore != null) {
+            physicalColumns = normalizeToStreamingStoreColumns(physicalColumns);
+        }
+
         int columnCount =
-                physicalRowFields.size() + nonPhysicalColumnsCount(newOptions, physicalColumns);
+                physicalColumns.size() + nonPhysicalColumnsCount(newOptions, physicalColumns);
         int physicalColumnIndex = 0;
         for (int i = 0; i < columnCount; i++) {
             String optionalName = newOptions.get(compoundKey(SCHEMA, i, NAME));
@@ -995,6 +1001,15 @@ public class FlinkCatalog extends AbstractCatalog {
                 newOptions,
                 table.comment().orElse(""),
                 nonPhysicalColumnComments);
+    }
+
+    @Nullable
+    private String getStreamingStore(Map<String, String> options) {
+        return options.get(CoreOptions.STREAMING_STORE.key());
+    }
+
+    private List<String> normalizeToStreamingStoreColumns(List<String> columns) {
+        return columns.subList(0, columns.size() - 3);
     }
 
     private CatalogMaterializedTable buildMaterializedTable(

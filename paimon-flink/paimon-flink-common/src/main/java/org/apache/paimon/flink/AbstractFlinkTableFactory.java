@@ -18,6 +18,13 @@
 
 package org.apache.paimon.flink;
 
+import org.apache.flink.table.catalog.ObjectPath;
+import org.apache.flink.table.catalog.ResolvedCatalogTable;
+import org.apache.flink.table.catalog.ResolvedSchema;
+import org.apache.flink.table.factories.CatalogFactory;
+import org.apache.flink.table.factories.Factory;
+import org.apache.flink.table.factories.FactoryUtil;
+import org.apache.paimon.CoreOptions;
 import org.apache.paimon.CoreOptions.LogChangelogMode;
 import org.apache.paimon.CoreOptions.LogConsistency;
 import org.apache.paimon.CoreOptions.StreamingReadMode;
@@ -74,6 +81,7 @@ import static org.apache.paimon.CoreOptions.LOG_CHANGELOG_MODE;
 import static org.apache.paimon.CoreOptions.LOG_CONSISTENCY;
 import static org.apache.paimon.CoreOptions.SCAN_MODE;
 import static org.apache.paimon.CoreOptions.STREAMING_READ_MODE;
+import static org.apache.paimon.CoreOptions.STREAMING_STORE;
 import static org.apache.paimon.CoreOptions.StartupMode.FROM_SNAPSHOT;
 import static org.apache.paimon.CoreOptions.StartupMode.FROM_SNAPSHOT_FULL;
 import static org.apache.paimon.flink.FlinkConnectorOptions.FILESYSTEM_JOB_LEVEL_SETTINGS_ENABLED;
@@ -97,6 +105,13 @@ public abstract class AbstractFlinkTableFactory
 
     @Override
     public DynamicTableSource createDynamicTableSource(Context context) {
+        Options options = Options.fromMap(context.getCatalogTable().getOptions());
+        // Check if streaming-store is fluss
+        if (options.getOptional(STREAMING_STORE).isPresent()
+                && options.get(STREAMING_STORE) == CoreOptions.StreamingStore.FLUSS) {
+            return createFlussDynamicTableSource(context, context.getCatalogTable().getOptions());
+        }
+
         CatalogTable origin = context.getCatalogTable().getOrigin();
         Table table =
                 origin instanceof SystemCatalogTable
@@ -105,9 +120,9 @@ public abstract class AbstractFlinkTableFactory
         boolean unbounded =
                 context.getConfiguration().get(ExecutionOptions.RUNTIME_MODE)
                         == RuntimeExecutionMode.STREAMING;
-        Map<String, String> options = table.options();
-        if (options.containsKey(SCAN_BOUNDED.key())
-                && parseBoolean(options.get(SCAN_BOUNDED.key()))) {
+        Map<String, String> tableOptions = table.options();
+        if (tableOptions.containsKey(SCAN_BOUNDED.key())
+                && parseBoolean(tableOptions.get(SCAN_BOUNDED.key()))) {
             unbounded = false;
         }
         if (origin instanceof SystemCatalogTable) {
@@ -124,7 +139,14 @@ public abstract class AbstractFlinkTableFactory
 
     @Override
     public DynamicTableSink createDynamicTableSink(Context context) {
+        Options options = Options.fromMap(context.getCatalogTable().getOptions());
+        if (options.getOptional(STREAMING_STORE).isPresent()
+                && options.get(STREAMING_STORE) == CoreOptions.StreamingStore.FLUSS) {
+            return createFlussDynamicTableSink(context, context.getCatalogTable().getOptions());
+        }
+
         Table table = buildPaimonTable(context);
+
         if (table instanceof FormatTable) {
             return new FlinkFormatTableSink(
                     context.getObjectIdentifier(), (FormatTable) table, context);
@@ -338,6 +360,150 @@ public abstract class AbstractFlinkTableFactory
             return ((TableConfig) config).getConfiguration().toMap();
         } else {
             throw new IllegalArgumentException("Unexpected config: " + config.getClass());
+        }
+    }
+
+    /**
+     * Create Fluss DynamicTableSource for Flink. This method should be overridden by subclasses or
+     * implemented to use Fluss's Flink DynamicTableSource.
+     *
+     * @param context The table factory context.
+     * @param options The Paimon table options.
+     * @return Fluss DynamicTableSource instance.
+     */
+    protected DynamicTableSource createFlussDynamicTableSource(
+            DynamicTableFactory.Context context, Map<String, String> options) {
+        Factory factory =
+                FactoryUtil.discoverFactory(context.getClassLoader(), Factory.class, "fluss");
+        CatalogFactory catalogFactory = (CatalogFactory) factory;
+        Map<String, String> flussOptions =
+                OptionsUtils.convertToPropertiesPrefixed(options, "fluss");
+
+        org.apache.flink.table.catalog.Catalog catalog = catalogFactory
+                .createCatalog(
+                        new CatalogFactory.Context() {
+                            @Override
+                            public String getName() {
+                                return flinkCatalog.getName();
+                            }
+
+                            @Override
+                            public Map<String, String> getOptions() {
+                                return flussOptions;
+                            }
+
+                            @Override
+                            public ReadableConfig getConfiguration() {
+                                return context.getConfiguration();
+                            }
+
+                            @Override
+                            public ClassLoader getClassLoader() {
+                                return context.getClassLoader();
+                            }
+                        });
+        catalog.open();
+
+        try {
+            DynamicTableSourceFactory dynamicTableSourceFactory =
+                    (DynamicTableSourceFactory)
+                            catalog
+                                    .getFactory()
+                                    .get();
+            DynamicTableFactory.Context newContext =
+                    new FactoryUtil.DefaultDynamicTableContext(
+                            context.getObjectIdentifier(),
+                            context.getCatalogTable().copy(
+                                    catalog.getTable(
+                                            new ObjectPath(
+                                                    context.getObjectIdentifier().getDatabaseName(),
+                                                    context.getObjectIdentifier().getObjectName()
+                                            )
+                                    ).getOptions()
+                            ),
+                            context.getEnrichmentOptions(),
+                            context.getConfiguration(),
+                            context.getClassLoader(),
+                            context.isTemporary());
+            return dynamicTableSourceFactory.createDynamicTableSource(newContext);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create Fluss dynamic Table sink.", e);
+        }
+        finally {
+            catalog.close();
+        }
+    }
+
+    /**
+     * Create Fluss DynamicTableSink for Flink. This method should be overridden by subclasses or
+     * implemented to use Fluss's Flink DynamicTableSink.
+     *
+     * @param context The table factory context.
+     * @param options The Paimon table options.
+     * @return Fluss DynamicTableSink instance.
+     */
+    protected DynamicTableSink createFlussDynamicTableSink(
+            DynamicTableFactory.Context context, Map<String, String> options) {
+        Factory factory =
+                FactoryUtil.discoverFactory(context.getClassLoader(), Factory.class, "fluss");
+        CatalogFactory catalogFactory = (CatalogFactory) factory;
+        Map<String, String> flussOptions =
+                OptionsUtils.convertToPropertiesPrefixed(options, "fluss");
+
+        org.apache.flink.table.catalog.Catalog catalog = catalogFactory
+                .createCatalog(
+                        new CatalogFactory.Context() {
+                            @Override
+                            public String getName() {
+                                return flinkCatalog.getName();
+                            }
+
+                            @Override
+                            public Map<String, String> getOptions() {
+                                return flussOptions;
+                            }
+
+                            @Override
+                            public ReadableConfig getConfiguration() {
+                                return context.getConfiguration();
+                            }
+
+                            @Override
+                            public ClassLoader getClassLoader() {
+                                return context.getClassLoader();
+                            }
+                        });
+        catalog.open();
+
+        try {
+            DynamicTableSinkFactory dynamicTableSinkFactory =
+                    (DynamicTableSinkFactory)
+                            catalog
+                                    .getFactory()
+                                    .get();
+
+
+            DynamicTableFactory.Context newContext =
+                    new FactoryUtil.DefaultDynamicTableContext(
+                            context.getObjectIdentifier(),
+                            context.getCatalogTable().copy(
+                                    catalog.getTable(
+                                            new ObjectPath(
+                                                    context.getObjectIdentifier().getDatabaseName(),
+                                                    context.getObjectIdentifier().getObjectName()
+                                            )
+                                    ).getOptions()
+                            ),
+                            context.getEnrichmentOptions(),
+                            context.getConfiguration(),
+                            context.getClassLoader(),
+                            context.isTemporary());
+            return dynamicTableSinkFactory.createDynamicTableSink(newContext);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create Fluss dynamic Table sink.", e);
+        }
+        finally {
+            catalog.close();
         }
     }
 }
