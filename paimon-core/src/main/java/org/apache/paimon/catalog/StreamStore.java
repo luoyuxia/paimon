@@ -19,9 +19,9 @@
 package org.apache.paimon.catalog;
 
 import org.apache.paimon.schema.Schema;
-import org.apache.paimon.schema.SchemaChange;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Interface for managing tables in external streaming stores.
@@ -31,22 +31,34 @@ import java.util.List;
  * to use a streaming store by setting the {@code streaming-store} table property, this interface is
  * used to create a corresponding table in the streaming store with the same schema as the Paimon
  * table.
- *
  */
-public interface StreamingStore extends AutoCloseable {
+public interface StreamStore extends AutoCloseable {
 
     /**
      * Creates a table in the streaming store with the specified identifier and schema.
      *
-     * <p>This method is called when a Paimon table is upgraded to use a streaming store. The
-     * created table should have the same schema as the Paimon table to ensure data compatibility.
+     * <p>This method is called when a Paimon table is upgraded to use a stream store. The created
+     * table should have the same schema as the Paimon table to ensure data compatibility.
      *
      * @param identifier The table identifier (database and table name)
      * @param schema The table schema to create
-     * @param ignoreIfExists If true, the operation should not fail if the table already exists
      * @throws RuntimeException if the table creation fails
      */
-    List<SchemaChange> createTable(Identifier identifier, Schema schema, boolean ignoreIfExists);
+    void createTable(Identifier identifier, Schema schema);
+
+    /**
+     * Drops partitions from a table in the stream store.
+     *
+     * <p>This method removes the specified partitions from the stream store table. Each partition
+     * is represented as a map of partition column names to their values.
+     *
+     * @param identifier The table identifier (database and table name)
+     * @param partitions List of partitions to drop, where each partition is a map of partition
+     *     column names to their values
+     * @throws Catalog.TableNotExistException if the table does not exist in the streaming store
+     */
+    void dropPartitions(Identifier identifier, List<Map<String, String>> partitions)
+            throws Catalog.TableNotExistException;
 
     /**
      * Drops a table from the streaming store.
@@ -58,4 +70,3 @@ public interface StreamingStore extends AutoCloseable {
      */
     void dropTable(Identifier identifier);
 }
-

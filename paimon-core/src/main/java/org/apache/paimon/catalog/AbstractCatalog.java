@@ -27,9 +27,11 @@ import org.apache.paimon.fs.FileStatus;
 import org.apache.paimon.fs.Path;
 import org.apache.paimon.function.Function;
 import org.apache.paimon.function.FunctionChange;
+import org.apache.paimon.options.CatalogOptions;
 import org.apache.paimon.options.Options;
 import org.apache.paimon.partition.Partition;
 import org.apache.paimon.partition.PartitionStatistics;
+import org.apache.paimon.rest.RESTUtil;
 import org.apache.paimon.schema.Schema;
 import org.apache.paimon.schema.SchemaChange;
 import org.apache.paimon.schema.SchemaManager;
@@ -82,6 +84,8 @@ public abstract class AbstractCatalog implements Catalog {
     protected final Map<String, String> tableDefaultOptions;
     protected final CatalogContext context;
 
+    protected volatile StreamStore streamStore;
+
     protected AbstractCatalog(FileIO fileIO) {
         this.fileIO = fileIO;
         this.tableDefaultOptions = new HashMap<>();
@@ -107,6 +111,26 @@ public abstract class AbstractCatalog implements Catalog {
 
     protected FileIO fileIO(Path path) {
         return fileIO;
+    }
+
+    protected StreamStore getStreamStore() {
+        if (streamStore == null) {
+            synchronized (this) {
+                if (streamStore == null) {
+                    String streamStoreStr = context.options().get(CatalogOptions.STREAM_STORE);
+                    if (streamStoreStr == null) {
+                        throw new UnsupportedOperationException("stream store is not set");
+                    }
+
+                    Map<String, String> options =
+                            RESTUtil.extractPrefixMap(
+                                    context.options().toMap(), streamStoreStr + ".");
+
+                    streamStore = new FlussStreamStore(options);
+                }
+            }
+        }
+        return streamStore;
     }
 
     public Optional<CatalogLockFactory> lockFactory() {

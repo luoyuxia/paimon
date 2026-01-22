@@ -177,4 +177,13 @@ public class CatalogOptions {
                             "Whether to allow static cache in file io implementation. If not allowed, this means that "
                                     + "there may be a large number of FileIO instances generated, enabling caching can "
                                     + "lead to resource leakage.");
+
+    public static final ConfigOption<String> STREAM_STORE =
+            key("streamstore")
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "Specifies the streaming store implementation to enable second-level latency for Paimon tables. "
+                                    + "Currently supports: 'fluss' - Use Fluss as the streaming store for second-level latency. "
+                                    + "This allows upgrading existing minute-level latency Paimon tables to second-level latency without losing historical data or requiring complex migration.");
 }

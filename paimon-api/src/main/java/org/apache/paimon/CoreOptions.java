@@ -2032,6 +2032,16 @@ public class CoreOptions implements Serializable {
                                     + "Currently supports: 'fluss' - Use Fluss as the streaming store for second-level latency. "
                                     + "This allows upgrading existing minute-level latency Paimon tables to second-level latency without losing historical data or requiring complex migration.");
 
+    public static final ConfigOption<Boolean> STREAM_STORE_ENABLED =
+            key("streamstore.enabled")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription(
+                            "Whether to enable stream store. "
+                                    + "When set to true, all writes are routed to the stream store instead of directly to Paimon file store. "
+                                    + "The streami store's Tiering Service then asynchronously writes data to Paimon, maintaining data consistency. "
+                                    + "Read operations automatically use Union Read to combine historical data from Paimon snapshots and real-time data from the stream store. ");
+
     public static final ConfigOption<Boolean> BATCH_SCAN_STREAMING_STORE =
             key("batch-scan-streaming-store")
                     .booleanType()

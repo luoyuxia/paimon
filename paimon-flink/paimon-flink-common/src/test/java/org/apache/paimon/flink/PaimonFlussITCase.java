@@ -27,12 +27,37 @@ import java.util.List;
 public class PaimonFlussITCase extends CatalogITCaseBase {
 
     @Test
-    void testInsert() throws Exception {
-        sql("CREATE TABLE t1 (a INT, b STRING) with ('streaming-store' = 'fluss', 'fluss.bootstrap.servers' = 'localhost:9123')");
-        batchSql("INSERT INTO %s VALUES (1, '1'), (2, '2')", "t1");
+    void testInsert() {
 
-        List<Row> rows =
-        batchSql("select * from t1");
+        tEnv.executeSql(
+                "create catalog fluss with ("
+                        + "'type' = 'paimon',"
+                        + "'warehouse' = '"
+                        + "/tmp/paimon-fluss-1"
+                        + "', "
+                        + "'streamstore' = 'fluss',"
+                        + "'fluss.bootstrap.servers' = '127.0.0.1:55839'"
+                        + ")");
+        tEnv.useCatalog("fluss");
+
+        sql("create table t2(a int, b string)");
+
+        sql("alter table t2 set ('streamstore.enabled' = 'true') ");
+
+        batchSql("INSERT INTO %s VALUES (1, '1'), (2, '2')", "t2");
+
+        System.out.println("start to select ....");
+        sEnv.executeSql(
+                "create catalog fluss with ("
+                        + "'type' = 'paimon',"
+                        + "'warehouse' = '"
+                        + "/tmp/paimon-fluss-1"
+                        + "', "
+                        + "'streamstore' = 'fluss',"
+                        + "'fluss.bootstrap.servers' = '127.0.0.1:55839'"
+                        + ")");
+        sEnv.useCatalog("fluss");
+        sEnv.executeSql("select * from t2")
+                .print();
     }
-
 }

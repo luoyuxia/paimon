@@ -18,11 +18,9 @@
 
 package org.apache.paimon.catalog;
 
-import org.apache.paimon.CoreOptions;
 import org.apache.paimon.fs.FileIO;
 import org.apache.paimon.fs.Path;
 import org.apache.paimon.operation.Lock;
-import org.apache.paimon.options.Options;
 import org.apache.paimon.schema.Schema;
 import org.apache.paimon.schema.SchemaChange;
 import org.apache.paimon.schema.SchemaManager;
@@ -31,21 +29,18 @@ import org.apache.paimon.schema.TableSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 
-import static org.apache.paimon.CoreOptions.STREAMING_STORE;
+import static org.apache.paimon.CoreOptions.STREAM_STORE_ENABLED;
 import static org.apache.paimon.options.CatalogOptions.CASE_SENSITIVE;
 
 /** A catalog implementation for {@link FileIO}. */
 public class FileSystemCatalog extends AbstractCatalog {
 
     private static final Logger LOG = LoggerFactory.getLogger(FileSystemCatalog.class);
-
 
     private final Path warehouse;
 
@@ -134,13 +129,7 @@ public class FileSystemCatalog extends AbstractCatalog {
     @Override
     public void createTableImpl(Identifier identifier, Schema schema) {
         SchemaManager schemaManager = schemaManager(identifier);
-
-        Map<String, String> options = new HashMap<>();
-        options.put("bootstrap.servers", "localhost:9123");
         try {
-            try (FlussStoreCatalog flussStoreCatalog = new FlussStoreCatalog(options)) {
-                flussStoreCatalog.createTable(identifier, schema, true);
-            }
             runWithLock(identifier, () -> uncheck(() -> schemaManager.createTable(schema)));
         } catch (RuntimeException e) {
             throw e;
@@ -178,112 +167,19 @@ public class FileSystemCatalog extends AbstractCatalog {
     @Override
     protected void alterTableImpl(Identifier identifier, List<SchemaChange> changes)
             throws TableNotExistException, ColumnAlreadyExistException, ColumnNotExistException {
-        // Check if this is a Fluss server callback by checking for a temporary marker
-        // We use a special option key to mark that this is a Fluss server callback
-        boolean isFlussCallback = false;
-        for (SchemaChange change : changes) {
-            if (change instanceof SchemaChange.SetOption) {
-                SchemaChange.SetOption setOption = (SchemaChange.SetOption) change;
-                // Check if this change includes the Fluss callback marker
-                if ("fluss.callback".equals(setOption.key())) {
-                    isFlussCallback = true;
-                    // Remove the marker from changes before committing
-                    changes = new ArrayList<>(changes);
-                    changes.remove(change);
-                    break;
-                }
-            }
-        }
-        
-        if (isFlussCallback) {
-            // This is a callback from Fluss server, just commit the schema changes
-            SchemaManager schemaManager = schemaManager(identifier);
-            try {
-                runWithLock(identifier, () -> schemaManager.commitChanges(changes));
-            } catch (TableNotExistException
-                    | ColumnAlreadyExistException
-                    | ColumnNotExistException
-                    | RuntimeException e) {
-                throw e;
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-            return;
-        }
-        
-        // Check if we need to notify Fluss server
+        // This is a callback from Fluss server, just commit the schema changes
+        SchemaManager schemaManager = schemaManager(identifier);
         try {
-            TableSchema currentSchema = loadTableSchema(identifier);
-            Options currentOptions = Options.fromMap(currentSchema.options());
-            CoreOptions.StreamingStore currentStreamingStore = currentOptions.get(STREAMING_STORE);
-            
-            // Check if we're setting streaming-store to 'fluss' in the changes
-            CoreOptions.StreamingStore newStreamingStore = currentStreamingStore;
-            boolean isSettingFluss = false;
             for (SchemaChange change : changes) {
                 if (change instanceof SchemaChange.SetOption) {
                     SchemaChange.SetOption setOption = (SchemaChange.SetOption) change;
-                    if (STREAMING_STORE.key().equals(setOption.key())) {
-                        try {
-                            newStreamingStore = CoreOptions.StreamingStore.valueOf(setOption.value().toUpperCase());
-                            isSettingFluss = (newStreamingStore == CoreOptions.StreamingStore.FLUSS);
-                        } catch (IllegalArgumentException e) {
-                            // Invalid streaming store value, ignore
-                        }
+                    if (STREAM_STORE_ENABLED.key().equals(setOption.key())) {
+                        TableSchema currentSchema = loadTableSchema(identifier);
+                        // todo: we need create fluss table
+                        getStreamStore().createTable(identifier, currentSchema.toSchema());
                     }
                 }
             }
-            
-            // If we're setting streaming-store to 'fluss' and it's not already set,
-            // we need to notify Fluss server first, then let Fluss server call back to commit schema
-            if (isSettingFluss && currentStreamingStore != CoreOptions.StreamingStore.FLUSS) {
-                // Extract Fluss options (all options starting with "fluss.")
-                Map<String, String> flussOptions = new HashMap<>();
-                for (SchemaChange change : changes) {
-                    if (change instanceof SchemaChange.SetOption) {
-                        SchemaChange.SetOption setOption = (SchemaChange.SetOption) change;
-                        String key = setOption.key();
-                        if (key.startsWith("fluss.")) {
-                            flussOptions.put(key.substring(6), setOption.value());
-                        }
-                    }
-                }
-                // Also get existing fluss options from current schema
-                for (Map.Entry<String, String> entry : currentSchema.options().entrySet()) {
-                    String key = entry.getKey();
-                    if (key.startsWith("fluss.") && !flussOptions.containsKey(key.substring(6))) {
-                        flussOptions.put(key.substring(6), entry.getValue());
-                    }
-                }
-                
-                // Send request to Fluss server
-                // Fluss server will create the table and then call back to commit schema changes
-                // The callback should include 'fluss.callback' = 'true' marker to identify it
-                try (FlussStoreCatalog flussStoreCatalog = new FlussStoreCatalog(flussOptions)) {
-                    // TODO: Add a method to FlussStoreCatalog to notify Fluss server about schema changes
-                    // The actual implementation should send HTTP request to Fluss server
-                    // The request should tell Fluss server to include 'fluss.callback' = 'true' when calling back
-                    LOG.info("Notifying Fluss server about schema change for table {}", identifier);
-                    // flussStoreCatalog.notifySchemaChange(identifier, currentSchema, changes);
-                } catch (Exception e) {
-                    LOG.warn("Failed to notify Fluss server about schema change", e);
-                    throw e;
-                }
-                
-                // Don't commit schema changes here, let Fluss server call back to commit
-                // Fluss server should include 'fluss.callback' = 'true' in the schema changes
-                return;
-            }
-        } catch (TableNotExistException e) {
-            throw e;
-        } catch (Exception e) {
-            LOG.warn("Failed to check streaming-store option, continuing with normal schema update", e);
-            // Continue with normal schema update if check fails
-        }
-        
-        // Normal schema update path
-        SchemaManager schemaManager = schemaManager(identifier);
-        try {
             runWithLock(identifier, () -> schemaManager.commitChanges(changes));
         } catch (TableNotExistException
                 | ColumnAlreadyExistException
@@ -304,7 +200,11 @@ public class FileSystemCatalog extends AbstractCatalog {
     }
 
     @Override
-    public void close() throws Exception {}
+    public void close() throws Exception {
+        if (streamStore != null) {
+            streamStore.close();
+        }
+    }
 
     @Override
     public String warehouse() {
