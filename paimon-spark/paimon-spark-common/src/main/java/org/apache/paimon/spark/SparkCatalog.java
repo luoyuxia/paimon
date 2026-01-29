@@ -27,6 +27,7 @@ import org.apache.paimon.catalog.PropertyChange;
 import org.apache.paimon.format.csv.CsvOptions;
 import org.apache.paimon.function.Function;
 import org.apache.paimon.function.FunctionDefinition;
+import org.apache.paimon.options.CatalogOptions;
 import org.apache.paimon.options.Options;
 import org.apache.paimon.rest.RESTCatalog;
 import org.apache.paimon.schema.Schema;
@@ -64,6 +65,7 @@ import org.apache.spark.sql.connector.catalog.SupportsNamespaces;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.catalog.TableChange;
+import org.apache.spark.sql.connector.catalog.TableProvider;
 import org.apache.spark.sql.connector.catalog.functions.UnboundFunction;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.IdentityTransform;
@@ -79,6 +81,7 @@ import org.apache.spark.sql.execution.datasources.json.JsonFileFormat;
 import org.apache.spark.sql.execution.datasources.orc.OrcFileFormat;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
 import org.apache.spark.sql.execution.datasources.v2.FileTable;
+import org.apache.spark.sql.sources.DataSourceRegister;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -94,6 +97,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.ServiceLoader;
 import java.util.stream.Collectors;
 
 import static org.apache.paimon.CoreOptions.FILE_FORMAT;
@@ -661,17 +665,50 @@ public class SparkCatalog extends SparkBaseCatalog
     protected org.apache.spark.sql.connector.catalog.Table loadSparkTable(
             Identifier ident, Map<String, String> extraOptions) throws NoSuchTableException {
         try {
+            org.apache.paimon.catalog.Identifier paimonIdent = toIdentifier(ident, catalogName);
             org.apache.paimon.table.Table paimonTable =
-                    catalog.getTable(toIdentifier(ident, catalogName));
-            if (paimonTable instanceof FormatTable) {
-                return toSparkFormatTable(ident, (FormatTable) paimonTable);
+                    catalog.getTable(paimonIdent);
+
+            if (Options.fromMap(paimonTable.options()).get(
+                    CoreOptions.STREAM_STORE_ENABLED)) {
+
+                Map<String, String> catalogOptions
+                         = catalog.options();
+
+                String streamStore = catalogOptions.get(
+                        CatalogOptions.STREAM_STORE.key());
+
+
+                // find the table provider via the stream store identifier
+                DataSourceRegister dataSourceRegister =  ServiceLoader.load(DataSourceRegister.class)
+                        .stream().filter(t -> t.get().shortName().equals(streamStore))
+                        .findFirst().get();
+                TableProvider tableProvider = (TableProvider) dataSourceRegister;
+
+                // put database name and table name into options, so that the table provider instance
+                // can know which table to load
+                extraOptions.put(
+                        "database", paimonIdent.getDatabaseName()
+                );
+                extraOptions.put(
+                        "table", paimonIdent.getTableName()
+                );
+
+               return tableProvider.getTable(
+                        //....
+                        extraOptions
+                );
             } else {
-                return new SparkTable(
-                        copyWithSQLConf(
-                                paimonTable,
-                                catalogName,
-                                toIdentifier(ident, catalogName),
-                                extraOptions));
+                if (paimonTable instanceof FormatTable) {
+                    return toSparkFormatTable(ident, (FormatTable) paimonTable);
+                } else {
+                    return new SparkTable(
+                            copyWithSQLConf(
+                                    paimonTable,
+                                    catalogName,
+                                    toIdentifier(ident, catalogName),
+                                    extraOptions));
+                }
             }
         } catch (Catalog.TableNotExistException e) {
             throw new NoSuchTableException(ident);
